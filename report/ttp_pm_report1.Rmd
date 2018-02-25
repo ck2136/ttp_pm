@@ -1,0 +1,139 @@
+---
+title: "TTP Predictive Marker Analysis: Exploratory Analysis"
+author: "Chong Kim"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document: 
+    toc: true # table of content true
+    toc_depth: 3  # upto three depths of headings (specified by #, ## and ###)
+    toc_float: true
+    number_sections: true  ## if you want number sections at each table header
+    theme: united  # many options for theme, this one is my favorite.
+    highlight: tango  # specifies the syntax highlighting style
+    #css: my.css   # you can add your custom css, should be in same folder
+csl: science.csl
+bibliography: bibliography.bib
+
+fontfamily: mathpazo
+fontfamilyoptions: sc, osf
+fontsize: 11pt
+---
+
+
+<style type="text/css">
+
+TOC {
+  position: relative;
+  left: 0;
+  top: 0;
+  width: 200px;
+  height: 100%;
+  overflow:auto;
+}
+
+body {
+  max-width: 1200px;
+  margin: auto;
+  margin-left:210px;
+  line-height: 20px;
+  font-size: 12px;
+}
+
+td {  /* Table  */
+  font-size: 13px;
+}
+h1.title {
+  font-size: 38px;
+  color: DarkRed;
+}
+h1 { /* Header 1 */
+  font-size: 28px;
+  color: DarkBlue;
+}
+h2 { /* Header 2 */
+    font-size: 22px;
+  color: DarkBlue;
+}
+h3 { /* Header 3 */
+  font-size: 18px;
+  font-family: "Times New Roman", Times, serif;
+  color: DarkBlue;
+}
+code.r{ /* Code block */
+    font-size: 12px;
+}
+pre { /* Code block - determines code spacing between lines */
+    font-size: 14px;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, error = FALSE, message = FALSE)
+```
+
+*Please read the [README.md](/https://github.com/ck2136/ttp_pm/blob/master/readme.md) file for more information.*
+
+# Objective
+
+This project is based on a database that was constructed with 73 patients that have Acquired [Thrombotic Thrombocytopenic Purpura (TTP)](https://en.wikipedia.org/wiki/Thrombotic_thrombocytopenic_purpura) at the Unviersity of Alabama Birmingham Hospital. The goal of this project is to determine the predictive markers for outcomes related to TTP patients  antigen levels.
+
+The data have been cleaned but there are a couple of things to note that have been done in the data management process.
+1. Repeated measures were not taken into account (i.e. The predictors and outcomes were based ona a cross-sectional measurement).
+2. There are only 73 patients and around 58 variables.
+3. The outcome of interest is
+    A. Mortality
+    B. Adverse event (exacerbation, relapse, death) vs. Remission
+4. There are many markers that we will see below
+
+# Univariate Analysis
+
+## Table 1: Population Table
+```{r ttp_uni_tbl_gen, include=FALSE}
+rm(list=ls())
+ttpfinal <- readRDS("../data/ttpselected.RDS")
+
+
+##### Set all the variable
+listVars <- names(ttpfinal)
+
+##### Define categorical variables
+catVars <- colnames(Filter(is.character, ttpfinal))
+
+##### Overall population table
+library(tableone)
+library(pander)
+table1 <- CreateTableOne(vars = listVars ,data = ttpfinal, factorVars = catVars)
+tab1mat <- print(table1, exact = catVars, showAllLevels = TRUE, floating=FALSE,latex.environments=NULL, booktabs=TRUE)
+##### tbl2
+table2 <- CreateTableOne(vars = listVars, strata = "mort" ,data = ttpfinal, factorVars = catVars)
+tab2mat <- print(table2, exact = catVars, showAllLevels = TRUE, floating=FALSE,latex.environments=NULL, booktabs=TRUE)
+##### tbl3
+table3 <- CreateTableOne(vars = listVars, strata = "outcome2" ,data = ttpfinal, factorVars = catVars)
+tab3mat <- print(table3, exact = catVars, showAllLevels = TRUE, floating=FALSE,latex.environments=NULL, booktabs=TRUE)
+
+```
+
+```{r ttp_uni_tbl1}
+pander(tab1mat,  split.table = Inf)
+```
+- The above table is an overall TTP patient summary table.
+
+## Table 2: Stratified by Mortality
+```{r ttp_uni_tbl2}
+##### Stratified by mortality
+pander(tab2mat,  split.table = Inf)
+```
+
+- Table 2 is stratified by mortality (1: death; 0: alive). 
+
+## Table 3: Stratified by Adverse Outcomes
+```{r ttp_uni_tbl3}
+##### Stratified by adverse event
+pander(tab3mat,  split.table = Inf)
+```
+
+- Table 2 is stratified by adverse event (1/2/3: exacerbation, relapse, or death; 0: remission). 
+
+# Visual Inspection
+
+## Figure 1: 
