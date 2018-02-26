@@ -1,0 +1,251 @@
+---
+title: "TTP Predictive Marker Analysis: Statistical Analysis"
+author: "Chong Kim"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document: 
+    toc: true # table of content true
+    toc_depth: 3  # upto three depths of headings (specified by #, ## and ###)
+    toc_float: true
+    number_sections: true  ## if you want number sections at each table header
+    theme: united  # many options for theme, this one is my favorite.
+    highlight: tango  # specifies the syntax highlighting style
+    #css: my.css   # you can add your custom css, should be in same folder
+csl: science.csl
+bibliography: bibliography.bib
+
+fontfamily: mathpazo
+fontfamilyoptions: sc, osf
+fontsize: 11pt
+---
+
+
+<style type="text/css">
+
+TOC {
+  position: relative;
+  left: 0;
+  top: 0;
+  width: 200px;
+  height: 100%;
+  overflow:auto;
+}
+
+body {
+  max-width: 1200px;
+  margin: auto;
+  margin-left:210px;
+  line-height: 20px;
+  font-size: 12px;
+}
+
+td {  /* Table  */
+  font-size: 13px;
+}
+h1.title {
+  font-size: 38px;
+  color: DarkRed;
+}
+h1 { /* Header 1 */
+  font-size: 28px;
+  color: DarkBlue;
+}
+h2 { /* Header 2 */
+    font-size: 22px;
+  color: DarkBlue;
+}
+h3 { /* Header 3 */
+  font-size: 18px;
+  font-family: "Times New Roman", Times, serif;
+  color: DarkBlue;
+}
+code.r{ /* Code block */
+    font-size: 12px;
+}
+pre { /* Code block - determines code spacing between lines */
+    font-size: 14px;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, error = FALSE, message = FALSE)
+```
+
+*Please read the [README.md](/https://github.com/ck2136/ttp_pm/blob/master/readme.md) file for more information.*
+
+# Objective
+
+This project is based on a database that was constructed with 73 patients that have Acquired [Thrombotic Thrombocytopenic Purpura (TTP)](https://en.wikipedia.org/wiki/Thrombotic_thrombocytopenic_purpura) at the Unviersity of Alabama Birmingham Hospital. The goal of this project is to determine the predictive markers for outcomes related to TTP patients  antigen levels.
+
+The previous [exploratory analysis](ttp_pm_report1.html) indicated some significant univariate association between predictors and mortality (Other outcomes such as exacerbation and relapse didn't show any strong association with predictors in the data). 
+
+In this report, we will go through traditional statistical model (e.g. logistic regression) and ML methods (e.g. decision tree, random forest, and support vector) to determine which factors are highly associated wtih outcomes in TTP patients.
+
+# Logistic Regression Model
+
+## Logistic Regression without Variable Selection
+
+- This is just an illustration to indicate that:
+    - You should never include all variables just for the sake of it.
+    - There are collinearities that are present thus the standard errors will be highly inflated.
+    - Note: Since there were missing values in some of the variables that seemed to be significant, we imputed the values using median imputation. We also excluded some variables that had near zero variance.
+
+### Table 1: logistic regression with all variabiles (based on univariate p-value)
+```{r ttp_log_tbl_gen}
+rm(list=ls())
+ttpfinal <- readRDS("../data/ttpselected.RDS")
+
+library(caret)
+library(dplyr)
+preProcValues<- preProcess(ttpfinal, c("medianImpute"))
+ttptransformed <- predict(preProcValues, ttpfinal)
+
+#### still categorical variables that we won't have information on. Also need to exclude those that don't have 2 or more levels of variation in the features (e.g. eculizumab)
+mort_data <- ttptransformed %>%
+  select(-culture, -rec_drug, -smoking, -sle, -hcv, -hiv, -neoplasia, -hsv, -eculizumab, -cyclophosphamide, -transplant, -bortezomib, -disease, -outcome1 ,-outcome2, -outcome3) %>%
+  mutate(sex = ifelse(sex == "0", "Male","Female"),
+         mort = as.numeric(mort)) %>%
+  mutate_at(.,.vars = c("cmb_cns", "cmb_abd", "cmb_chst", "htn", "dm", "preg"), .funs = funs(ifelse(. == "0", "No","Yes")))
+
+##### all variable logistic regression
+glm_fit_all <- glm(mort ~ ., mort_data, family=binomial("logit"))
+library(stargazer)
+```
+
+
+```{r ttp_tab1_taboutput, results='asis'}
+stargazer(glm_fit_all, dep.var.labels = "Mortality", type = "html")
+```
+
+- As you can see, there is just too many variables in the output and the model specification is (likely) wrong.
+- The log-likelihood and the AIC isn't an appropriate value.
+
+## Logistic Regression without Variable Selection
+
+- Since we won't be using all the variables, we will be selecting the necessary variables using L1 and L2 (shrinkage) regularization method. The basic idea is to shrink the $\beta$ coefficients of the regresion models so as to prevent overfitting (more information [here](https://en.wikipedia.org/wiki/Regularization_%28mathematics%29)). 
+
+- Below we will also conduct a 5x-repeated 10-fold Cross Validation (5x-10CV) to determine the appropriate shrinkage parameter (i.e. hyperparameter) value. This will allow us to narrow down on the important variables.
+
+### Figure 1: Shrinkage Method
+```{r ttp_log_shrink}
+
+##### First remove all near zero variance predictors
+mort_data <- ttptransformed %>%
+  select(-culture, -rec_drug, -smoking, -sle, -hcv, -hiv, -neoplasia, -hsv, -eculizumab, -cyclophosphamide, -transplant, -bortezomib, -disease, -outcome1 ,-outcome2, -outcome3) %>%
+  mutate(sex = ifelse(sex == "0", "Male","Female"),
+         mort = ifelse(mort == "0", "Alive","Dead")) %>%
+  mutate_at(.,.vars = c("cmb_cns", "cmb_abd", "cmb_chst", "htn", "dm", "preg"), .funs = funs(ifelse(. == "0", "No","Yes")))
+
+mort_data <- mort_data[,-nearZeroVar(mort_data)]
+
+##### all variable logistic regression
+#### First set the training control... we will use repeated CV and mortality is binary
+cvCtrl <- trainControl(method = "repeatedcv", repeats = 5,
+                       summaryFunction = twoClassSummary
+                       ,
+                       classProbs = TRUE,
+                       sampling = "up"
+)
+set.seed(123)
+
+#### create grid for GLM hyperparameters
+glmGrid <- expand.grid(.alpha = (1:10) * 0.1, 
+                       .lambda = (1:10) * 0.1)
+
+#### glm model training profile
+
+glmProfile <- train(mort ~ .,
+                    data = mort_data,
+                    tuneGrid = glmGrid,
+                    preProcess = c("YeoJohnson","center","scale", "nzv"),
+                    metric = "ROC",
+                    method = "glmnet",
+                    trControl = cvCtrl)
+
+plot(glmProfile)
+```
+
+- Figure 1 indicates the cross-validated performance of the GLM prediction model based on various hyperparameter values.
+    - The performance criteria we are looking at is the Receiver Operating Characteristic (ROC) curve and ideally we would like the ROC value to be close to 1.0.
+    - Based on the figure, we can see that higher values of the mixing parameter and lower value of the regularization parameter achieves a higher ROC value.
+
+### Figure 2: GLM-based Important Variables
+
+```{r glm_varimp}
+
+glm_vimp <- varImp(glmProfile, scale = F)
+glm_vimp_top<- glm_vimp$importance %>%
+  cbind(., rownames(glm_vimp$importance)) %>%
+  arrange(.,desc(Overall)) %>%
+  head(.,4)
+plot(varImp(glmProfile,scale=F), top = 10)
+```
+
+- Figure 2 indicates the most important variables (based on the shrinkage method).
+    - The most important variable is `r glm_vimp_top[1,2]`
+    - The 2nd important variable is `r glm_vimp_top[2,2]`
+    - The 3rd important variable is `r glm_vimp_top[3,2]`
+    - Since we are interested in biomarkers, if we exclude the first two variables and run the analysis again let's see if twe get any interesting predictive markers.
+    
+    
+### Figure 3: Shrinkage Method w/o Platelet Stabilization Time Variables
+```{r ttp_log_shrink_wottp}
+
+##### First remove all near zero variance predictors
+mort_data <- ttptransformed %>%
+  select(-culture, -rec_drug, -smoking, -sle, -hcv, -hiv, -neoplasia, -hsv, -eculizumab, -cyclophosphamide, -transplant, -bortezomib, -disease, -outcome1 ,-outcome2, -outcome3,  -time_plt_stbl, -plt_stb_7) %>%
+  mutate(sex = ifelse(sex == "0", "Male","Female"),
+         mort = ifelse(mort == "0", "Alive","Dead")) %>%
+  mutate_at(.,.vars = c("cmb_cns", "cmb_abd", "cmb_chst", "htn", "dm", "preg"), .funs = funs(ifelse(. == "0", "No","Yes")))
+
+mort_data <- mort_data[,-nearZeroVar(mort_data)]
+
+##### all variable logistic regression
+#### First set the training control... we will use repeated CV and mortality is binary
+cvCtrl <- trainControl(method = "repeatedcv", repeats = 5,
+                       summaryFunction = twoClassSummary
+                       ,
+                       classProbs = TRUE,
+                       sampling = "up"
+)
+set.seed(123)
+
+#### create grid for GLM hyperparameters
+glmGrid <- expand.grid(.alpha = (1:10) * 0.1, 
+                       .lambda = (1:10) * 0.1)
+
+#### glm model training profile
+
+glmProfile <- train(mort ~ .,
+                    data = mort_data,
+                    tuneGrid = glmGrid,
+                    preProcess = c("YeoJohnson","center","scale", "nzv"),
+                    metric = "ROC",
+                    method = "glmnet",
+                    trControl = cvCtrl)
+
+plot(glmProfile)
+```
+
+- Figure 3 indicates the cross-validated performance of the GLM prediction model when excluding the time to platelet stabilization variables.
+    - Unfortunately the ROC decreases drastically when we exlude the above variables in the model.
+
+### Figure 4: GLM-based Important Variables w/o Platelet Stabilization Variables 
+
+```{r glm_varimp_wo_ps}
+
+glm_vimp <- varImp(glmProfile, scale = F)
+glm_vimp_top<- glm_vimp$importance %>%
+  cbind(., rownames(glm_vimp$importance)) %>%
+  arrange(.,desc(Overall)) %>%
+  head(.,4)
+plot(varImp(glmProfile,scale=F), top = 10)
+```
+
+- As indicated above, there aren't strong predictive markers for predicting mortality using a logistic regression model.
+
+# Decision Tree Model
+
+- Using a [decision tree algorithm](https://en.wikipedia.org/wiki/Decision_tree_learning), we used a similar approach to hyperparameter selection using 5x10CV. 
+
+## 

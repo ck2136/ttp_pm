@@ -108,9 +108,11 @@ tab1mat <- print(table1, exact = catVars, showAllLevels = TRUE, floating=FALSE,l
 table2 <- CreateTableOne(vars = listVars, strata = "mort" ,data = ttpfinal, factorVars = catVars)
 tab2mat <- print(table2, exact = catVars, showAllLevels = TRUE, floating=FALSE,latex.environments=NULL, booktabs=TRUE)
 ##### tbl3
-table3 <- CreateTableOne(vars = listVars, strata = "outcome2" ,data = ttpfinal, factorVars = catVars)
+table3 <- CreateTableOne(vars = listVars, strata = "outcome1" ,data = ttpfinal, factorVars = catVars)
 tab3mat <- print(table3, exact = catVars, showAllLevels = TRUE, floating=FALSE,latex.environments=NULL, booktabs=TRUE)
-
+##### tbl4
+table4 <- CreateTableOne(vars = listVars, strata = "outcome2" ,data = ttpfinal, factorVars = catVars)
+tab4mat <- print(table4, exact = catVars, showAllLevels = TRUE, floating=FALSE,latex.environments=NULL, booktabs=TRUE)
 ```
 
 ```{r ttp_uni_tbl1}
@@ -126,14 +128,98 @@ pander(tab2mat,  split.table = Inf)
 
 - Table 2 is stratified by mortality (1: death; 0: alive). 
 
-## Table 3: Stratified by Adverse Outcomes
+## Table 3: Stratified by Adverse Outcomes (4 categories)
 ```{r ttp_uni_tbl3}
 ##### Stratified by adverse event
 pander(tab3mat,  split.table = Inf)
 ```
 
-- Table 2 is stratified by adverse event (1/2/3: exacerbation, relapse, or death; 0: remission). 
+- Table 3 is stratified by adverse event (1/2/3: exacerbation, relapse, or death; 0: remission). 
+
+## Table 4: Stratified by Adverse Outcomes (binary)
+```{r ttp_uni_tbl4}
+##### Stratified by adverse event
+pander(tab4mat,  split.table = Inf)
+```
+
+- Table 4 is stratified by merging the adverse events to binary categories. 
+
 
 # Visual Inspection
 
-## Figure 1: 
+## Figure 1: Significant Variables Distribution
+
+```{r ttp_visinspec_fig1}
+##### 
+library(reshape2)
+library(ggplot2)
+visdf <- ttpfinal[,grepl("ldh|ptt|fibr|ddimer|alb|^trop|pai|bb", colnames(ttpfinal))]
+d <- melt(visdf)
+ggplot(d,aes(x = value)) + 
+  facet_wrap(~variable,scales = "free_x") + 
+  geom_histogram() 
+
+```
+
+
+- Variables such as ldh, ptt, and fibr seems to exhibit a relatively normal distribution.
+- Trop and pai clearly exhibit a zero-inflated distribution (e.g poisson or negative binomial).
+
+## Figure 2: Distribution stratified by mortality
+
+```{r ttp_visinspec_fig2}
+##### 
+library(reshape2)
+library(ggplot2)
+visdf <- ttpfinal[,grepl("mort|ldh|ptt|fibr|ddimer|alb|^trop|pai|bb", colnames(ttpfinal))]
+d <- melt(visdf, id = "mort")
+
+ggplot(data = d, aes(x=variable, y=value, fill = mort)) + 
+  geom_boxplot(aes(fill=mort)) +
+  facet_wrap( ~ variable, scales="free")+
+  scale_fill_discrete(name="Mortality",
+                      breaks=c("0", "1"),
+                      labels=c("Alive", "Death"))
+
+```
+
+- There is a fair bit of discrepancy between those that died compared to those that are alive.
+- Note: Only 9 died therefore the comparison here isn't quite as robust
+
+## Figure 3: Distribution stratified by Adverse Event
+
+```{r ttp_visinspec_fig3}
+##### 
+library(reshape2)
+library(ggplot2)
+visdf <- ttpfinal[,grepl("outcome1|ldh|ptt|fibr|ddimer|alb|^trop|pai|bb", colnames(ttpfinal))]
+d <- melt(visdf, id = "outcome1")
+
+ggplot(data = d, aes(x=variable, y=value, fill = outcome1)) + 
+  geom_boxplot(aes(fill=outcome1)) +
+  facet_wrap( ~ variable, scales="free") +
+  scale_fill_discrete(name="Adverse\nOutcome",
+                      breaks=c("0", "1","2","3"),
+                      labels=c("No Event", "Death","Exacerbation","Relapse"))
+
+```
+
+## Figure 4: Distribution stratified by Adverse Event (binary)
+
+```{r ttp_visinspec_fig4}
+##### 
+library(reshape2)
+library(ggplot2)
+visdf <- ttpfinal[,grepl("outcome2|ldh|ptt|fibr|ddimer|alb|^trop|pai|bb", colnames(ttpfinal))]
+d <- melt(visdf, id = "outcome2")
+
+ggplot(data = d, aes(x=variable, y=value, fill = outcome2)) + 
+  geom_boxplot(aes(fill=outcome2)) +
+  facet_wrap( ~ variable, scales="free") +
+  scale_fill_discrete(name="Adverse\nOutcome",
+                      breaks=c("0", "1"),
+                      labels=c("No Event", "Adverse Event"))
+
+```
+
+For the next step (i.e. Statistical Analysis) click [here](ttp_pm_report2.html).
