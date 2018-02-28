@@ -248,4 +248,281 @@ plot(varImp(glmProfile,scale=F), top = 10)
 
 - Using a [decision tree algorithm](https://en.wikipedia.org/wiki/Decision_tree_learning), we used a similar approach to hyperparameter selection using 5x10CV. 
 
-## 
+## Decision Tree with 5x 10-CV
+
+- Here, we are going to tune the complexity parameter and minsplit 
+
+### Figure 5: Decision Tree Hyper Parameter Tuning
+```{r rpart_train}
+# since caret alone can't do it we'll need to create our custom method
+rpart_ck <- getModelInfo("rpart", regex = FALSE)[[1]]
+
+# add minsplit parameter
+rpart_ck$parameters <- data.frame(parameter = c("cp", "minsplit"),
+                                  class = rep("numeric",2),
+                                  label = c("Complexity","MinimumSplit"))
+
+# modify grid function
+rpart_ck$grid <- function(x, y, len = NULL, search = "grid") {
+  library(rpart)
+  
+  dat <- if(is.data.frame(x)) x else as.data.frame(x)
+  dat$.outcome <- y
+  
+  initialFit <- rpart::rpart(.outcome ~ .,
+                             data = dat,
+                             control = rpart::rpart.control(cp = 0,
+                                                            minsplit = 1))$cptable
+  initialFit <- initialFit[order(-initialFit[,"CP"]), , drop = FALSE]
+  if(search == "grid") {
+    if(nrow(initialFit) < len) {
+      tuneSeq <- expand.grid(cp = seq(min(initialFit[, "CP"]),
+                                     max(initialFit[, "CP"]),
+                                     length = len),
+                             minsplit = seq(1,
+                                            nrow(dat)/2,
+                                            length = len))
+    } else tuneSeq <-  expand.grid(cp = initialFit[1:len,"CP"],
+                                   minsplit = seq(1:nrow(dat), length = len))
+    colnames(tuneSeq) <- c("cp","minsplit")
+  } else {
+    tuneSeq <- expand.grid(cp = unique(sample(initialFit[, "CP"], size = len, replace = TRUE)),
+                           minsplit = unique(sample(nrow(dat)/2, size = len, replace = TRUE)))
+  }
+  
+  tuneSeq
+}
+
+rpart_ck$fit <- function(x, y, wts, param, lev, last, classProbs, ...) {
+  cpValue <- if(!last) param$cp else 0
+  minsplitValue <- if(!last) param$minsplit else 0
+  theDots <- list(...)
+  if(any(names(theDots) == "control"))
+  {
+    theDots$control$cp <- cpValue
+    theDots$control$minsplit <- minsplitValue
+    theDots$control$xval <- 0
+    ctl <- theDots$control
+    theDots$control <- NULL
+  } else ctl <- rpart::rpart.control(cp = cpValue, minsplit = minsplitValue, xval = 0)
+  
+  ## check to see if weights were passed in (and availible)
+  if(!is.null(wts)) theDots$weights <- wts
+  
+  modelArgs <- c(list(formula = as.formula(".outcome ~ ."),
+                      data = if(is.data.frame(x)) x else as.data.frame(x),
+                      control = ctl),
+                 theDots)
+  modelArgs$data$.outcome <- y
+  
+  out <- do.call(rpart::rpart, modelArgs)
+  
+  if(last) out <- rpart::prune.rpart(out, cp = param$cp)
+  out
+}
+
+
+#install.packages("mlbench")
+library(mlbench)
+set.seed(123)
+
+cvCtrl <- trainControl(method = "repeatedcv",
+                       # 5-cv...
+                       number = 10,
+                       # repeat 2 times
+                       repeats = 3,
+                       summaryFunction = twoClassSummary
+                       ,
+                       classProbs = TRUE,
+                       sampling = "up"
+)
+
+tuneGrid <- expand.grid(cp = seq(0, 0.1, length.out = 10),
+                        minsplit = seq(10, 50, by = 10))
+
+rpart_ck_prof <- caret::train(mort ~ ., data = mort_data,
+                       method = rpart_ck,
+                       #tuneLength = 10,
+                       trControl = cvCtrl,
+                       tuneGrid = tuneGrid,
+                       metric = 'ROC',
+                       preProc = c("center","scale","nzv"))
+
+
+plot(rpart_ck_prof, metric = "ROC", highlight = TRUE)
+```
+
+### Figure 6: Decision Tree Important Variables 
+
+```{r dt_varimp}
+
+rpart_vimp <- varImp(rpart_ck_prof, scale = F)
+rpart_vimp_top<- rpart_vimp$importance %>%
+  cbind(., rownames(rpart_vimp$importance)) %>%
+  arrange(.,desc(Overall)) %>%
+  head(.,4)
+plot(varImp(rpart_ck_prof,scale=F), top = 10)
+```
+
+
+# Random Forest Model
+
+- Using a [Random Forest algorithm](https://en.wikipedia.org/wiki/Random_forest), we used a similar approach to hyperparameter selection using 5x10CV. 
+
+## Random Forest with 5x 10-CV
+
+- Here, we are going to tune the number of variables randomly sampled (`mtry`) and number of trees to grow (`ntree`)
+
+### Figure 7: Random Forest Hyperparameter Tuning
+
+```{r rf_hyptune}
+library(randomForest)
+custrf <- getModelInfo("rf", regex= FALSE)[[1]]
+custrf$parameters <- data.frame(parameter = c("mtry", "ntree"),
+                                  class = rep("numeric",2),
+                                  label = c("mtry","ntree"))
+
+# modify grid function
+custrf$grid <- function(x, y, len = NULL, search = "grid") {
+  if(search == "grid") {
+    out <- expand.grid(mtry = caret::var_seq(p = ncol(x),
+                                             classification = is.factor(y),
+                                             len = len),
+                       ntree = seq(nrow(x), nrow(x)*2, len))
+  } else {
+    out <- expand.grid(mtry = unique(sample(1:ncol(x), size = len, replace = TRUE)),
+                       ntree = unique(sample(seq(nrow(x), nrow(x)*2, len))))
+  }
+  out
+}
+
+custrf$fit <- function(x, y, wts, param, lev, last, weights, classProbs, ...) {
+  randomForest(x, y, mtry = param$mtry, ntree=param$ntree, ...)
+}
+
+
+custrf$predict <- function(modelFit, newdata, preProc = NULL, submodels = NULL) {
+  predict(modelFit, newdata)
+}
+
+custrf$prob <- function(modelFit, newdata, preProc = NULL, submodels = NULL) {
+  predict(modelFit, newdata, type = "prob")
+}
+custrf$sort <- function(x) x[order(x[,1]),]
+custrf$levels <- function(x) x$classes
+
+
+library(mlbench)
+set.seed(123)
+
+cvCtrl <- trainControl(method = "repeatedcv",
+                       # 5-cv...
+                       number = 10,
+                       # repeat 2 times
+                       repeats = 3,
+                       summaryFunction = twoClassSummary
+                       ,
+                       classProbs = TRUE,
+                       sampling = "up"
+)
+
+tuneGrid <- expand.grid(mtry = c(1,4,8,16,32,48,56,64),
+                        ntree = seq(100, 1000, by = 100))
+
+rf_profile <- caret::train(mort ~ ., data = mort_data,
+                              method = custrf,
+                              #tuneLength = 10,
+                              trControl = cvCtrl,
+                              tuneGrid = tuneGrid,
+                              metric = 'ROC',
+                              preProc = c("center","scale","nzv"))
+
+
+plot(rf_profile, metric = "ROC", highlight = TRUE)
+```
+
+### Figure 8: Random Forest Variable Importance 
+
+```{r rf_varimp}
+
+rf_vimp <- varImp(rf_profile, scale = F)
+rf_vimp_top<- rf_vimp$importance %>%
+  cbind(., rownames(rf_vimp$importance)) %>%
+  arrange(.,desc(Overall)) %>%
+  head(.,4)
+plot(varImp(rf_profile,scale=F), top = 10)
+
+```
+
+
+# Support Vector Model
+
+- Using a [Support Vector Machine algorithm](https://en.wikipedia.org/wiki/Support_vector_machine), we used a similar approach to hyperparameter selection using 5x10CV. 
+
+## Support Vector Machine  with 5x 10-CV
+
+- Here, we are going to tune the $\sigma$ (`sigma`) and cost parameter (`C`)
+- First we will use a linear kernel (i.e. hyper parameter space division is linear)
+
+### Figure 7: SVM Linear Kernel
+
+```{r svm_hyp_tune}
+library(kernlab)
+set.seed(231)
+svmlingrid <- expand.grid(C = c(0,0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2,5))
+svmlinFit <- train(mort ~ .,
+                   data = mort_data,
+                   method = "svmLinear",
+                   metric = 'ROC',
+                   tuneGrid = svmlingrid,
+                   trControl = cvCtrl,
+                   preProcess = c("center","scale"))
+plot(svmlinFit)
+```
+
+
+### Figure 7: SVM Radial Basis Kernel
+
+```{r svm_hyp_tune_2}
+sigDist <- sigest(mort ~ ., data = mort_data, frac = 1)
+svmTuneGrid <- expand.grid(sigma = sigDist, C = 2^(-2:7))
+
+set.seed(1056)
+svmradFit <- train(mort ~ .,
+                   data = mort_data,
+                   method = "svmRadial",
+                   metric = 'ROC',
+                   tuneGrid = svmTuneGrid,
+                   trControl = cvCtrl,
+                   preProcess = c("center","scale"))
+plot(svmradFit)
+```
+
+- Both linear and radial have `ROC` values that are way less compared to the previous models.
+- There isn't a variable importance measure for the svm algorithms (but a penalizedSVM algorithm has a regualarization method that maybe able to).
+
+# K-Nearest Neighbour
+
+- Using a [KNN algorithm](https://en.wikipedia.org/wiki/KNN), we used a similar approach to hyperparameter selection using 5x10CV. 
+
+## KNN  with 5x 10-CV
+
+- Here, we are going to tune the number of nearest neighbor (`k`)
+
+### Figure 7: KNN Hyperparameter tuning
+
+```{r knn_hyptune}
+knnFit <- train(mort ~ .,
+                data = mort_data,
+                method = "knn",
+                metric = 'ROC',
+                trControl = cvCtrl,
+                preProcess = c("center","scale"),
+                tuneLength = 50)
+
+
+plot(knnFit)
+```
+
+- Similar to SVM, the algorithm itself doesn't perform all too well. The ROC values are pretty low.
+- There isn't a variable importance measure for knn algorithm.
