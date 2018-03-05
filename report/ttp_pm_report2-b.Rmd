@@ -1,5 +1,5 @@
 ---
-title: "TTP Predictive Marker Analysis: Statistical Analysis"
+title: "TTP Predictive Marker Analysis: Statistical Analysis Part B"
 author: "Chong Kim"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
@@ -89,11 +89,12 @@ In this report, we will go through traditional statistical model (e.g. logistic 
     - You should never include all variables just for the sake of it.
     - There are collinearities that are present thus the standard errors will be highly inflated.
     - Note: Since there were missing values in some of the variables that seemed to be significant, we imputed the values using median imputation. We also excluded some variables that had near zero variance.
+    - Note: This report analyzes variables that were continuously measured but are now categorical (either binary or categorical) variables based on clinical judgement/cutoff.
 
 ### Table 1: logistic regression with all variabiles (based on univariate p-value)
 ```{r ttp_log_tbl_gen}
 rm(list=ls())
-ttpfinal <- readRDS("../data/ttpselected.RDS")
+ttpfinal <- readRDS("../data/ttpselectedcat.RDS")
 
 library(caret)
 library(dplyr)
@@ -102,10 +103,12 @@ ttptransformed <- predict(preProcValues, ttpfinal)
 
 #### still categorical variables that we won't have information on. Also need to exclude those that don't have 2 or more levels of variation in the features (e.g. eculizumab)
 mort_data <- ttptransformed %>%
-  select(-culture, -rec_drug, -smoking, -sle, -hcv, -hiv, -neoplasia, -hsv, -eculizumab, -cyclophosphamide, -transplant, -bortezomib, -disease, -outcome1 ,-outcome2, -outcome3) %>%
+  select(-culture, -rec_drug, -smoking, -sle, -hcv, -hiv, -neoplasia, -hsv, -eculizumab, -cyclophosphamide, -transplant, -bortezomib, -disease, -outcome1 ,-outcome2) %>%
   mutate(sex = ifelse(sex == "0", "Male","Female"),
          mort = as.numeric(mort)) %>%
-  mutate_at(.,.vars = c("cmb_cns", "cmb_abd", "cmb_chst", "htn", "dm", "preg"), .funs = funs(ifelse(. == "0", "No","Yes"))) 
+  mutate_at(.,.vars = c("cmb_cns", "cmb_abd", "cmb_chst", "htn", "dm", "preg"), .funs = funs(ifelse(. == "0", "No","Yes"))) %>%
+  filter(complete.cases(.))
+
 ##### all variable logistic regression
 glm_fit_all <- glm(mort ~ ., mort_data, family=binomial("logit"))
 library(stargazer)
@@ -130,10 +133,12 @@ stargazer(glm_fit_all, dep.var.labels = "Mortality", type = "html")
 
 ##### First remove all near zero variance predictors
 mort_data <- ttptransformed %>%
-  select(-culture, -rec_drug, -smoking, -sle, -hcv, -hiv, -neoplasia, -hsv, -eculizumab, -cyclophosphamide, -transplant, -bortezomib, -disease, -outcome1 ,-outcome2, -outcome3) %>%
+  select(-culture, -rec_drug, -smoking, -sle, -hcv, -hiv, -neoplasia, -hsv, -eculizumab, -cyclophosphamide, -transplant, -bortezomib, -disease, -outcome1 ,-outcome2) %>%
   mutate(sex = ifelse(sex == "0", "Male","Female"),
          mort = ifelse(mort == "0", "Alive","Dead")) %>%
-  mutate_at(.,.vars = c("cmb_cns", "cmb_abd", "cmb_chst", "htn", "dm", "preg"), .funs = funs(ifelse(. == "0", "No","Yes")))
+  mutate_at(.,.vars = c("cmb_cns", "cmb_abd", "cmb_chst", "htn", "dm", "preg"), .funs = funs(ifelse(. == "0", "No","Yes")))  %>%
+  filter(complete.cases(.))
+
 
 mort_data <- mort_data[,-nearZeroVar(mort_data)]
 
@@ -192,10 +197,12 @@ plot(varImp(glmProfile,scale=F), top = 10)
 
 ##### First remove all near zero variance predictors
 mort_data <- ttptransformed %>%
-  select(-culture, -rec_drug, -smoking, -sle, -hcv, -hiv, -neoplasia, -hsv, -eculizumab, -cyclophosphamide, -transplant, -bortezomib, -disease, -outcome1 ,-outcome2, -outcome3,  -time_plt_stbl, -plt_stb_7) %>%
+  select(-culture, -rec_drug, -smoking, -sle, -hcv, -hiv, -neoplasia, -hsv, -eculizumab, -cyclophosphamide, -transplant, -bortezomib, -disease, -outcome1 ,-outcome2,  -time_plt_stbl, -plt_stb_7) %>%
   mutate(sex = ifelse(sex == "0", "Male","Female"),
          mort = ifelse(mort == "0", "Alive","Dead")) %>%
-  mutate_at(.,.vars = c("cmb_cns", "cmb_abd", "cmb_chst", "htn", "dm", "preg"), .funs = funs(ifelse(. == "0", "No","Yes")))
+  mutate_at(.,.vars = c("cmb_cns", "cmb_abd", "cmb_chst", "htn", "dm", "preg"), .funs = funs(ifelse(. == "0", "No","Yes")))  %>%
+  filter(complete.cases(.))
+
 
 mort_data <- mort_data[,-nearZeroVar(mort_data)]
 
@@ -241,10 +248,7 @@ glm_vimp_top<- glm_vimp$importance %>%
 plot(varImp(glmProfile,scale=F), top = 10)
 ```
 
-- Figure 2 indicates the most important variables (based on the shrinkage method wo platelet stabilization time variables).
-    - The most important variable is `r glm_vimp_top[1,2]`
-    - The 2nd important variable is `r glm_vimp_top[2,2]`
-    - The 3rd important variable is `r glm_vimp_top[3,2]`
+- As indicated above, there aren't strong predictive markers for predicting mortality using a logistic regression model.
 
 # Decision Tree Model
 
@@ -264,6 +268,7 @@ rpart_ck$parameters <- data.frame(parameter = c("cp", "minsplit"),
                                   class = rep("numeric",2),
                                   label = c("Complexity","MinimumSplit"))
 
+# specification such that all models will be printed
 rpart_ck$loop <- NULL
 
 # modify grid function
@@ -369,6 +374,11 @@ plot(varImp(rpart_ck_prof,scale=F), top = 10)
 ```
 
 
+- Figure 2 indicates the most important variables (based on the shrinkage method).
+    - The most important variable is `r rpart_vimp_top[1,2]`
+    - The 2nd important variable is `r rpart_vimp_top[2,2]`
+    - The 3rd important variable is `r rpart_vimp_top[3,2]`
+
 # Random Forest Model
 
 - Using a [Random Forest algorithm](https://en.wikipedia.org/wiki/Random_forest), we used a similar approach to hyperparameter selection using 5x10CV. 
@@ -458,11 +468,11 @@ plot(varImp(rf_profile,scale=F), top = 10)
 
 ```
 
-
-- Figure 8 indicates the most important variables (based on the shrinkage method wo platelet stabilization time variables).
+- Figure 2 indicates the most important variables (based on the shrinkage method).
     - The most important variable is `r rf_vimp_top[1,2]`
     - The 2nd important variable is `r rf_vimp_top[2,2]`
     - The 3rd important variable is `r rf_vimp_top[3,2]`
+
 
 # Support Vector Model
 
@@ -507,7 +517,7 @@ svmradFit <- train(mort ~ .,
 plot(svmradFit)
 ```
 
-- Both linear and radial have `ROC` values that are way less compared to the previous models (esp Random FOrest).
+- Both linear and radial have `ROC` values that are way less compared to the previous models.
 - There isn't a variable importance measure for the svm algorithms (but a penalizedSVM algorithm has a regualarization method that maybe able to).
 
 # K-Nearest Neighbour
@@ -534,20 +544,19 @@ knnFit <- train(mort ~ .,
 plot(knnFit)
 ```
 
-- Similar to SVM, the algorithm itself doesn't perform all too well. The ROC values are lower compared to the random forest model.
+- Similar to SVM, the algorithm itself doesn't perform all too well. The ROC values are pretty low.
 - There isn't a variable importance measure for knn algorithm.
 
 # Conclusion
 
 So far we have used glm, decision tree, random forest, support vector machines, and k nearest neighbor algorithm to determine which algorithm produces the best predicting (based on area under the ROC curve) model. The objective was to train a model that has the optimal hyperparameter values and the optimal features/variables. The optimal model was chosen through iteratively training and testing the model on the sample using a 5x-10CV resampling method. Here is an overall summary of the algorithms based on the ROC values:
 
-- The glm model with platelet stabilization time had the highest ROC value. However, the model including those variables excluded all biomarkers except for a few biomarkers.
-- When excluding platelet stabilization time, the random forest model and knn model had the highest ROC.
+- The glm model with platelet stabilization time had the highest ROC value. However, the model including those variables excluded almost all biomarkers except for a few.
+- When excluding platelet stabilization time, the random forest model and knn model had the highest ROC values.
 - Important variables identified from the random forest model was `r rf_vimp_top[1,2]`, `r rf_vimp_top[2,2]`, and `r rf_vimp_top[3,2]`. 
 
 Based on the analysis, platelet stabilization seems to be the key to identifying mortality. Multiclass classification could be useful but since we only have 73 patients, even binary classification runs the risk of small sample size with larger number of potential predictors (here we have ~ `r ncol(mort_data)`). 
 
-
-For analysis performed on biomarkers categorized as either binary or 3 categories (normal, high and low),  clici [here](ttp_pm_report2-b.html).
+For analysis performed on biomarkers treated as continuous variables, click [here](ttp_pm_report2.html).
 
 For the next analyses (i.e. Stacked Analysis) click [here](ttp_pm_report3.html). From here on out the focus isn't necessarily to find the most predictive marker. 
