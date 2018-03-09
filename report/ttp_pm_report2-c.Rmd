@@ -1,0 +1,185 @@
+---
+title: "TTP Predictive Marker Analysis: Statistical Analysis Part C"
+author: "Chong Kim"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document: 
+    toc: true # table of content true
+    toc_depth: 3  # upto three depths of headings (specified by #, ## and ###)
+    toc_float: true
+    number_sections: true  ## if you want number sections at each table header
+    theme: united  # many options for theme, this one is my favorite.
+    highlight: tango  # specifies the syntax highlighting style
+    #css: my.css   # you can add your custom css, should be in same folder
+csl: science.csl
+bibliography: bibliography.bib
+
+fontfamily: mathpazo
+fontfamilyoptions: sc, osf
+fontsize: 11pt
+---
+
+
+<style type="text/css">
+
+TOC {
+  position: relative;
+  left: 0;
+  top: 0;
+  width: 200px;
+  height: 100%;
+  overflow:auto;
+}
+
+body {
+  max-width: 1200px;
+  margin: auto;
+  margin-left:210px;
+  line-height: 20px;
+  font-size: 12px;
+}
+
+td {  /* Table  */
+  font-size: 13px;
+}
+h1.title {
+  font-size: 38px;
+  color: DarkRed;
+}
+h1 { /* Header 1 */
+  font-size: 28px;
+  color: DarkBlue;
+}
+h2 { /* Header 2 */
+    font-size: 22px;
+  color: DarkBlue;
+}
+h3 { /* Header 3 */
+  font-size: 18px;
+  font-family: "Times New Roman", Times, serif;
+  color: DarkBlue;
+}
+code.r{ /* Code block */
+    font-size: 12px;
+}
+pre { /* Code block - determines code spacing between lines */
+    font-size: 14px;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, error = FALSE, message = FALSE)
+```
+
+*Please read the [README.md](/https://github.com/ck2136/ttp_pm/blob/master/readme.md) file for more information.*
+
+# Objective
+
+This project is based on a database that was constructed with 73 patients that have Acquired [Thrombotic Thrombocytopenic Purpura (TTP)](https://en.wikipedia.org/wiki/Thrombotic_thrombocytopenic_purpura) at the Unviersity of Alabama Birmingham Hospital. The goal of this project is to determine the predictive markers for outcomes related to TTP patients  antigen levels.
+
+The previous [exploratory analysis](ttp_pm_report1.html) indicated some significant univariate association between predictors and mortality (Other outcomes such as exacerbation and relapse didn't show any strong association with predictors in the data). [Statistical Analysis A](ttp_pm_report2.html) and  [Statistical Analysis B](ttp_pm_report2-b.html) approach the analysis using machine learning algorithms.
+
+In this report, we will go through analyzing the time to platelet stabilization using a survival analysis framework  (e.g. Cox proportional hazard regression) to determine which factors are highly associated with risk of platelet non-stabilization(or stabilization) in TTP patients.
+
+# Exploratory Visualization 
+
+## Kaplan Meier Curve
+
+- This is just an illustration to indicate:
+    - Probability of non-stabilization (given our outcome here is time to stabilization)
+    - Median time to stabilization
+    - Potential Follow-up time
+    - Visual inspection of hazard function over time
+
+### Table 1: logistic regression with all variabiles (based on univariate p-value)
+```{r ttp_km}
+rm(list=ls())
+temp <- readRDS("~/Documents/Projects/Huy/ttp_pm/data/ttpselected.RDS")
+
+# kaplan-meier calculation (non parametric survival probabilities)
+library(survival)
+result.km <- survfit(Surv(temp$time, temp$status) ~ 1, conf.type = "log-log")
+# To calculated the potential follow-up time
+temp$fu <- 1 - temp$status
+result.rkm <- survfit(Surv(temp$time, temp$fu) ~ 1, conf.type = "log-log")
+
+library(survminer)
+
+
+# Customized survival curves
+ggsurvplot(result.km, data = temp,
+           surv.median.line = "hv", # Add medians survival
+           
+           # Change legends: title & labels
+           #legend.title = "Sex",
+           #legend.labs = c("Male", "Female"),
+           # Add p-value and tervals
+           #pval = TRUE,
+           
+           conf.int = TRUE,
+           # Add risk table
+           risk.table = TRUE,
+           tables.height = 0.2,
+           tables.theme = theme_cleantable(),
+           
+           # Color palettes. Use custom color: c("#E7B800", "#2E9FDF"),
+           # or brewer color (e.g.: "Dark2"), or ggsci color (e.g.: "jco")
+           #palette = c("#E7B800", "#2E9FDF"),
+           ggtheme = theme_bw() # Change ggplot2 theme
+)
+```
+
+The median time to survival is `r summary(result.km)$table[[7]]` days. 
+
+```{r exp_haz_func, include = FALSE}
+library(muhaz)
+# we want to check the hazard at 5 and 10 months interval
+result.pe10 <- pehaz(temp$time, temp$status, width = 10, 
+                     max.time = 60)
+result.pe5 <- pehaz(temp$time, temp$status, width = 5, 
+                     max.time = 60)
+
+result.smooth <- muhaz(temp$time, temp$status, bw.smooth = 10, 
+                       b.cor = "left", max.time = 60)
+
+```
+
+
+```{r exp_haz_func_plot}
+plot(result.pe10, ylim = c(0, 0.3), col = "blacK")
+title("Hazard Function Estimation")
+lines(result.pe5, col = "green")
+lines(result.smooth, col = "red")
+```
+
+we can clearly see a decreasing hazard function... in this case an exponential would not be appropriate. 
+
+# Univariate Analysis
+
+## Cox-PH regression Significant Variables
+
+Below are the univariately statistically significant variables based on modeling a Cox-PH regression.
+
+```{r univ_coxph}
+
+tmp <- sapply(setdiff(colnames(temp), c("eculizumab", "cyclophosphamide", "transplant")), function(x) {
+  try(
+    c(summary(coxph(Surv(time, status) ~ get(x), data = temp))$waldtest[[3]] < 0.05,
+      round(summary(coxph(Surv(time, status) ~ get(x), data = temp))$waldtest[[3]], 3)), TRUE)
+})
+library(dplyr)
+library(magrittr)
+tmp1 <- tmp %>%
+  t(.) %>%
+  set_colnames(c("Sign","p"))  %>%
+  as.data.frame() %>%
+  cbind(rownames(.)) %>%
+  set_colnames(c("Sign","p","Varn"))  %>%
+  select(p, Varn) %>%
+  mutate(p = as.numeric(p)) %>%
+  filter(., p <= 0.05)
+
+library(pander)
+pander(tmp1, split.table = Inf)
+```
+
