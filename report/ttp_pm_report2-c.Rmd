@@ -93,18 +93,37 @@ In this report, we will go through analyzing the time to platelet stabilization 
 
 ### Table 1: logistic regression with all variabiles (based on univariate p-value)
 ```{r ttp_km}
+library(dplyr)
+library(magrittr)
 rm(list=ls())
-temp <- readRDS("~/Documents/Projects/Huy/ttp_pm/data/ttpselected.RDS")
+ttpfinal <- readRDS("~/Documents/Projects/Huy/ttp_pm/data/ttpselected.RDS")
+ttpfinalcat <- readRDS("../data/ttpselectedcat.RDS")
 
+merged <- ttpfinal %>%
+  mutate(id = seq(1:nrow(.))) %>%
+  left_join(
+    ttpfinalcat %>%
+      select(which(sapply(ttpfinalcat, class) == 'character')) %>%
+      set_colnames(., unlist(sapply(names(ttpfinalcat %>% 
+                                            select(which(sapply(ttpfinalcat, class) == 'character'))), function(x) {
+                                              paste0(x,"_cat") 
+                                            }))) %>%
+      mutate(id = seq(1:nrow(.))) %>%
+      select(-c(1:2)), by = "id"
+  ) %>%
+  mutate(race = ifelse(race == "Afro-Hispanic", "AA", race),
+         plt_stb_7 = as.character(plt_stb_7))
+  
+temp <- merged
+temp$mort <- as.numeric(temp$mort)
 # kaplan-meier calculation (non parametric survival probabilities)
 library(survival)
-result.km <- survfit(Surv(temp$time, temp$status) ~ 1, conf.type = "log-log")
+result.km <- survfit(Surv(temp$los, temp$mort) ~ 1, conf.type = "log-log")
 # To calculated the potential follow-up time
-temp$fu <- 1 - temp$status
-result.rkm <- survfit(Surv(temp$time, temp$fu) ~ 1, conf.type = "log-log")
+temp$fu <- 1 - temp$mort
+result.rkm <- survfit(Surv(temp$los, temp$fu) ~ 1, conf.type = "log-log")
 
 library(survminer)
-
 
 # Customized survival curves
 ggsurvplot(result.km, data = temp,
@@ -134,12 +153,12 @@ The median time to survival is `r summary(result.km)$table[[7]]` days.
 ```{r exp_haz_func, include = FALSE}
 library(muhaz)
 # we want to check the hazard at 5 and 10 months interval
-result.pe10 <- pehaz(temp$time, temp$status, width = 10, 
+result.pe10 <- pehaz(temp$los, temp$mort, width = 10, 
                      max.time = 60)
-result.pe5 <- pehaz(temp$time, temp$status, width = 5, 
+result.pe5 <- pehaz(temp$los, temp$mort, width = 5, 
                      max.time = 60)
 
-result.smooth <- muhaz(temp$time, temp$status, bw.smooth = 10, 
+result.smooth <- muhaz(temp$los, temp$mort, bw.smooth = 10, 
                        b.cor = "left", max.time = 60)
 
 ```
@@ -158,24 +177,35 @@ we can clearly see a decreasing hazard function... in this case an exponential w
 
 ## Cox-PH regression Significant Variables
 
-Below are the univariately statistically significant variables based on modeling a Cox-PH regression.
+Below are the univariately statistically significant variables based on modeling a Cox-PH regression for continuous variables.
 
 ```{r univ_coxph}
 
-tmp <- sapply(setdiff(colnames(temp), c("eculizumab", "cyclophosphamide", "transplant")), function(x) {
+temp_cont <- temp %>%
+  select(which(sapply(temp, class) != 'character'), -outcome2, los, mort)
+
+# fit univariate survival models to all variables and check wald-test for fit
+tmp <- sapply(setdiff(colnames(temp_cont), c("time","status","los","mort","fum","eculizumab", "cyclophosphamide", "transplant", "outcome1","outcome2","outcome2_cat")), function(x) {
   try(
-    c(summary(coxph(Surv(time, status) ~ get(x), data = temp))$waldtest[[3]] < 0.05,
-      round(summary(coxph(Surv(time, status) ~ get(x), data = temp))$waldtest[[3]], 3)), TRUE)
+    c(summary(coxph(Surv(los, mort) ~ get(x), data = temp_cont))$waldtest[[3]] < 0.05,
+      round(summary(coxph(Surv(los, mort) ~ get(x), data = temp_cont))$waldtest[[3]], 3),
+      round(exp(confint(coxph(Surv(los,mort) ~ get(x), data = temp_cont))[1]), 3),
+      round(exp(confint(coxph(Surv(los,mort) ~ get(x), data = temp_cont))[2]), 3),
+      round(summary(coxph(Surv(los,mort) ~ get(x), data = temp_cont))$coefficients[2], 3)
+    ), TRUE)
 })
+
+
+# to select p-values based on variables that had p <= 0.05
 library(dplyr)
 library(magrittr)
 tmp1 <- tmp %>%
   t(.) %>%
-  set_colnames(c("Sign","p"))  %>%
+  set_colnames(c("Sign","p","LCI","UCI","Coef"))  %>%
   as.data.frame() %>%
   cbind(rownames(.)) %>%
-  set_colnames(c("Sign","p","Varn"))  %>%
-  select(p, Varn) %>%
+  set_colnames(c("Sign","p","LCI","UCI","Coef","Varn"))  %>%
+  select(p, LCI, UCI, Coef, Varn) %>%
   mutate(p = as.numeric(p)) %>%
   filter(., p <= 0.05)
 
@@ -183,3 +213,36 @@ library(pander)
 pander(tmp1, split.table = Inf)
 ```
 
+Below are the univariately statistically significant variables based on modeling a Cox-PH regression for categorical variables.
+
+
+```{r univ_coxph_cat}
+
+temp_cat <- temp %>% select(which(sapply(temp, class) == 'character'), -outcome1,-outcome2,-outcome2_cat, los, mort)
+
+tmp_cat <- sapply(setdiff(colnames(temp_cat), c("time","status","los","mort","fum","eculizumab", "cyclophosphamide", "transplant", "outcome1", "outcome2")), function(x) {
+  try(
+    c(summary(coxph(Surv(los, mort) ~ get(x), data = temp_cat))$waldtest[[3]] < 0.05,
+      round(summary(coxph(Surv(los, mort) ~ get(x), data = temp_cat))$waldtest[[3]], 3)
+      ), TRUE)
+})
+
+tmp2 <- tmp_cat %>%
+  t(.) %>%
+  set_colnames(c("Sign","p"))  %>%
+  as.data.frame() %>%
+  cbind(rownames(.)) %>%
+  set_colnames(c("Sign","p", "Varn"))  %>%
+  select(p, Varn) %>%
+  mutate(p = as.numeric(p)) %>%
+  filter(., p <= 0.05)
+
+pander(tmp2, split.table = Inf)
+```
+
+unfortunately if we check the regression estimates (i.e. standard error and etc) we notice that the significance is due to problems with how the pai_cat variable is distributed  across the two groups. (i.e. small sample size).
+
+```{r pai_prob, results="asis"}
+library(stargazer)
+stargazer(coxph(Surv(los, mort) ~ pai_cat, data = temp_cat), ci = TRUE, type = "html")
+```
