@@ -89,30 +89,48 @@ The data have been cleaned but there are a couple of things to note that have be
 
 ## Table 1: Population Table
 ```{r ttp_uni_tbl_gen, include=FALSE}
+library(dplyr)
+library(magrittr)
 rm(list=ls())
 ttpfinal <- readRDS("../data/ttpselected.RDS")
+ttpfinalcat <- readRDS("../data/ttpselectedcat.RDS")
+
+merged <- ttpfinal %>%
+  mutate(id = seq(1:nrow(.))) %>%
+  left_join(
+    ttpfinalcat %>%
+      select(which(sapply(ttpfinalcat, class) == 'character')) %>%
+      set_colnames(., unlist(sapply(names(ttpfinalcat %>% 
+                                            select(which(sapply(ttpfinalcat, class) == 'character'))), function(x) {
+                                              paste0(x,"_cat") 
+                                            }))) %>%
+      mutate(id = seq(1:nrow(.))) %>%
+      select(-c(1:2)), by = "id"
+  ) %>%
+  mutate(race = ifelse(race == "Afro-Hispanic", "AA", race),
+         plt_stb_7 = as.character(plt_stb_7))
+  
 
 
 ##### Set all the variable
-listVars <- names(ttpfinal)
-
+listVars <- setdiff(colnames(merged),c("outcome2_cat","mort","outcome1","outcome2","times","status","time","id"))
 ##### Define categorical variables
-catVars <- colnames(Filter(is.character, ttpfinal))
+catVars <- setdiff(colnames(Filter(is.character, merged)), c("outcome1","mort","outcome2_cat"))
 
 ##### Overall population table
 library(tableone)
 library(pander)
-table1 <- CreateTableOne(vars = listVars ,data = ttpfinal, factorVars = catVars)
+table1 <- CreateTableOne(vars = listVars ,data = merged, factorVars = catVars, argsNonNormal = listVars)
 tab1mat <- print(table1, exact = catVars, showAllLevels = TRUE, floating=FALSE,latex.environments=NULL, booktabs=TRUE)
 ##### tbl2
-table2 <- CreateTableOne(vars = listVars, strata = "mort" ,data = ttpfinal, factorVars = catVars)
-tab2mat <- print(table2, exact = catVars, showAllLevels = TRUE, floating=FALSE,latex.environments=NULL, booktabs=TRUE)
+table2 <- CreateTableOne(vars = listVars, strata = "mort" ,data = merged, factorVars = catVars, testNonNormal = wilcox.test) # include testNonNormal 
+tab2mat <- print(table2, exact = catVars, nonnormal = listVars, showAllLevels = TRUE, floating=FALSE,latex.environments=NULL, booktabs=TRUE) # include the nonnormal variables
 ##### tbl3
-table3 <- CreateTableOne(vars = listVars, strata = "outcome1" ,data = ttpfinal, factorVars = catVars)
-tab3mat <- print(table3, exact = catVars, showAllLevels = TRUE, floating=FALSE,latex.environments=NULL, booktabs=TRUE)
+table3 <- CreateTableOne(vars = listVars, strata = "outcome1" ,data = merged, factorVars = catVars)
+tab3mat <- print(table3, exact = catVars, nonnormal = listVars, showAllLevels = TRUE, floating=FALSE,latex.environments=NULL, booktabs=TRUE)
 ##### tbl4
-table4 <- CreateTableOne(vars = listVars, strata = "outcome2" ,data = ttpfinal, factorVars = catVars)
-tab4mat <- print(table4, exact = catVars, showAllLevels = TRUE, floating=FALSE,latex.environments=NULL, booktabs=TRUE)
+table4 <- CreateTableOne(vars = listVars, strata = "outcome2_cat" ,data = merged, factorVars = catVars)
+tab4mat <- print(table4, exact = catVars, nonnormal = listVars, showAllLevels = TRUE, floating=FALSE,latex.environments=NULL, booktabs=TRUE)
 ```
 
 ```{r ttp_uni_tbl1}
@@ -222,4 +240,4 @@ ggplot(data = d, aes(x=variable, y=value, fill = outcome2)) +
 
 ```
 
-For the next step (i.e. Statistical Analysis) click [here](ttp_pm_report2.html).
+For the analysis using binary prediction algorithms (i.e. Logistic regression) click [here](ttp_pm_report2.html). For analysis using survival analysis framework click [here](ttp_pm_report2-c.html).
